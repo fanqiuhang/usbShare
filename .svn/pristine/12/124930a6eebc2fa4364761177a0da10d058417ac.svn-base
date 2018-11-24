@@ -1,0 +1,211 @@
+package com.edata.bridge.usbshare;
+
+import com.alibaba.fastjson.JSON;
+import lombok.Data;
+
+/**
+ * 功能主类
+ */
+@Data
+public class Usbshare {
+
+    /**
+     * 默认终端ID 068032005464
+     * @param usbPort
+     * @return
+     */
+    public static String freeAccess(int usbPort){
+        return freeAccess(UsbshareConstants.DEFAULT_TERMINAL_ID,usbPort);
+    }
+    /**
+     * 默认 本机，端口 8110
+     * @param id
+     * @param usbPort
+     * @return
+     */
+    public static String freeAccess(String id, int usbPort) {
+        return freeAccess(UsbshareConstants.DEFAULT_IP,UsbshareConstants.DEFAULT_PORT,id,usbPort);
+    }
+
+    /**
+     * 默认不能强行释放其他计算机端口
+     * @param ip ip地址
+     * @param port 端口
+     * @param id 终端ID
+     * @param usbPort USB端口号
+     * @return
+     */
+    public static String freeAccess(String ip, int port, String id, int usbPort){
+        return freeAccess(ip,port,id,usbPort,0);
+    }
+
+    /**
+     * 释放终端usb设备使用权
+     * @param ip ip地址
+     * @param port 端口
+     * @param id 终端ID
+     * @param usbPort USB端口号
+     * @param forceClose 强行释放端口（0：释放本计算机打开的端口；1：强行释放端口，包括本计算机和其他计算机）
+     * @return
+     */
+    public static String freeAccess(String ip, int port, String id, int usbPort, int forceClose){
+        //检查合法性
+        if (!UsbshareSendSocketUtil.checkId(id)) {
+            return JSON.toJSONString(new UsbshareResult("端口格式错误"));
+        }
+        byte[] b = UsbshareSendSocketUtil.packageData(18,129,id,usbPort);
+        b[b.length-1] = (byte) forceClose;
+        //发起释放请求前，先查询端口目前是否是未使用状态
+        String state = UsbshareUtils.portIsUnuse(ip,port,id,usbPort);
+        if ("unuse".equals(state)) {
+            return JSON.toJSONString(new UsbshareResult());
+        } else if ((!"unuse".equals(state)) && (!"inuse".equals(state))){
+            return JSON.toJSONString(state);
+        }
+        //发起释放请求
+        String ss = UsbshareSendSocketUtil.sendSocket(ip,port,b);
+        //解析数据
+        String[] list = ss.split(",");
+        if (ss != null && list.length > 4 && "-95".equals(list[4])) {
+            return JSON.toJSONString(new UsbshareResult());
+        } else {
+            return JSON.toJSONString(new UsbshareResult(UsbshareUtils.analyseError(list)));
+        }
+    }
+
+//    /**
+//     * 终端ID默认 068032005464
+//     * @param usbPort
+//     * @return
+//     */
+//    public static String getAccess(int usbPort){
+//        return getAccess(UsbshareConstants.DEFAULT_TERMINAL_ID,usbPort);
+//    }
+
+    /**
+     * 终端ID，给string字符串。需要操作的usb端口号，给int类型
+     * @param id
+     * @param usbPort
+     * @return
+     */
+    public static String getAccess(String id,int usbPort){
+        return getAccess(UsbshareConstants.DEFAULT_IP,UsbshareConstants.DEFAULT_PORT,id,usbPort);
+    }
+
+    /**
+     * 获取终端usb设备使用权
+     * @param ip IP地址
+     * @param port 端口号
+     * @param id 终端ID
+     * @param usbPort USB端口号
+     * @return
+     */
+    public static String getAccess(String ip,int port,String id ,int usbPort){
+        //检查合法性
+        if (!UsbshareSendSocketUtil.checkId(id)) {
+            return JSON.toJSONString(new UsbshareResult("端口格式错误"));
+        }
+        //发起请求
+        String ss = UsbshareSendSocketUtil.sendSocket(ip,port,UsbshareSendSocketUtil.packageData(17,128,id,usbPort));
+        //读取数据
+        String[] list = ss.split(",");
+        if (list.length > 4 && "-96".equals(list[4])) {
+            return JSON.toJSONString(new UsbshareResult());
+        } else {
+            // 获取权限失败，再查一次端口使用详情，确认是否是自己占用使用权，如果是自己占用，就返回获取成功
+            if (list.length > 5 && "15".equals(list[5]) && UsbshareUtils.isYourself(ip,port,id,usbPort)) {
+                return JSON.toJSONString(new UsbshareResult());
+            }
+            return JSON.toJSONString(new UsbshareResult(UsbshareUtils.analyseError(list)));
+        }
+    }
+
+    /**
+     * 默认，本机，端口8110
+     * @return
+     */
+    public static String queryAllPortDetails() {
+        return queryAllPortDetails(UsbshareConstants.DEFAULT_IP,UsbshareConstants.DEFAULT_PORT);
+    }
+
+    /**
+     * 查询本机已打开的全部端口
+     * @param ip
+     * @param port
+     * @return
+     */
+    public static String queryAllPortDetails(String ip, int port) {
+        byte[] data = new byte[5];
+        data[0] = 0;
+        data[1] = 0;
+        data[2] = 0;
+        data[3] = 1;
+        data[4] = (byte) 135;
+
+        String ss = UsbshareSendSocketUtil.sendSocket(ip,port,data);
+        String[] list = ss.split(",");
+        if (ss != null && list.length > 4 && "-89".equals(list[4])) {
+            //制造一个本机
+            UsbshareNative result = new UsbshareNative();
+            result.setTerminalNum(Integer.valueOf(list[5]));
+            for (int i = 0; i < result.getTerminalNum(); i++) {
+                //开始制造一个Terminal
+                UsbshareTerminal usbshareTerminal = new UsbshareTerminal();
+                usbshareTerminal.setId(UsbshareUtils.translateFromASC(list, 6 + UsbshareUtils.countOffset(result) , 18 + UsbshareUtils.countOffset(result)));
+                usbshareTerminal.setUsbNum(Integer.valueOf(UsbshareUtils.translateFromHEX(list, 18 + UsbshareUtils.countOffset(result), 22 + UsbshareUtils.countOffset(result))));
+                for (int j = 0; j < usbshareTerminal.getUsbNum(); j++) {
+                    //开始制造一个Device
+                    String[] deviceData = UsbshareUtils.cutData(list,22 + j * 83  + UsbshareUtils.countOffset(result),83 );
+                    usbshareTerminal.addDevice(UsbshareUtils.makeDevice(deviceData));
+                }
+                result.addTerminal(usbshareTerminal);
+            }
+            return JSON.toJSONString(result);
+        } else {
+            return JSON.toJSONString(new UsbshareNative(UsbshareUtils.analyseError(list)));
+        }
+    }
+
+    /**
+     * 默认 终端id 068032005464
+     * @param usbPort
+     * @return
+     */
+    public static String queryPortDetail(int usbPort) {
+        return queryPortDetail(UsbshareConstants.DEFAULT_TERMINAL_ID,usbPort);
+    }
+
+    /**
+     * 默认本地ip ，默认端口 8110
+     * @param id
+     * @param usbPort
+     * @return
+     */
+    public static String queryPortDetail(String id , int usbPort) {
+        return queryPortDetail(UsbshareConstants.DEFAULT_IP,UsbshareConstants.DEFAULT_PORT,id,usbPort);
+    }
+
+    /**
+     * 获取终端usb端口详细信息
+     * @param ip id地址
+     * @param port 端口
+     * @param id 终端ID
+     * @param usbPort usb端口
+     * @return
+     */
+    public static String queryPortDetail(String ip, int port, String id , int usbPort){
+        //检查合法性
+        if (!UsbshareSendSocketUtil.checkId(id)) {
+            return JSON.toJSONString(new UsbshareResult("端口格式错误"));
+        }
+        //发起请求
+        String ss = UsbshareSendSocketUtil.sendSocket(ip,port,UsbshareSendSocketUtil.packageData(17,130,id,usbPort));
+        String[] list = ss.split(",");
+        if (ss != null && list.length > 4 && "-94".equals(list[4])) {
+            UsbsharePortDetail p = UsbshareUtils.makePortDetail(UsbshareUtils.cutData(list,5,142));
+            return JSON.toJSONString(p);
+        } else {
+            return JSON.toJSONString(new UsbsharePortDetail(UsbshareUtils.analyseError(list)));
+        }
+    }
+}

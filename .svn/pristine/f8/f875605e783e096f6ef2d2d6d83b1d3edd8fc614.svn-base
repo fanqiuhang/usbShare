@@ -1,0 +1,276 @@
+package com.edata.bridge.usbshare;
+
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
+
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
+import java.net.UnknownHostException;
+import java.util.Enumeration;
+import java.util.List;
+
+public class UsbshareUtils {
+
+
+    /**
+     * 解析错误
+     * @param list
+     * @return
+     */
+    protected static String analyseError(String[] list){
+        String result = "";
+        try {
+
+            switch (list[5]){
+                case "1":
+                    result = UsbshareConstants.ERROR_0x01;
+                    break;
+                case "6":
+                    result = UsbshareConstants.ERROR_0x06;
+                    break;
+                case "7":
+                    result = UsbshareConstants.ERROR_0x07;
+                    break;
+                case "15":
+                    result = UsbshareConstants.ERROR_0x0F;
+                    break;
+                case "16":
+                    result = UsbshareConstants.ERROR_0x10;
+                    break;
+                case "34":
+                    result = UsbshareConstants.ERROR_0x22;
+                    break;
+                case "-127":
+                    result = UsbshareConstants.ERROR_0x81;
+                    break;
+                case "-126":
+                    result = UsbshareConstants.ERROR_0x82;
+                    break;
+                case "-123":
+                    result = UsbshareConstants.ERROR_0x85;
+                    break;
+                case "-122":
+                    result = UsbshareConstants.ERROR_0x86;
+                    break;
+                case "-114":
+                    result = UsbshareConstants.ERROR_0x8E;
+                    break;
+                case "-113":
+                    result = UsbshareConstants.ERROR_0x8F;
+                    break;
+                default:
+                    result = "其他错误";
+
+            }
+            return result;
+        } catch (Exception e) {
+            return "异常错误";
+        }
+    }
+
+
+    /**
+     * 截取内容，转为字符串，统一返回一个字符串
+     * @param list
+     * @param begin 开始位置，从0 开始数
+     * @param end 结束位置，小于等于 list 长度（截取结果里，没有end位置的字符）
+     * @return
+     */
+    protected static String translateFromASC(String[] list, int begin, int end) {
+        StringBuilder builder = new StringBuilder();
+        if (end > list.length || begin >= end) {
+            return "";
+        }
+        for (int i = begin; i < end; i++) {
+            byte b = Byte.parseByte(list[i]);
+            char c = (char) b;
+            builder.append(c);
+        }
+        return builder.toString().trim();
+    }
+
+    /**
+     * 把 hex 十六进制数据解析
+     * @param list
+     * @param begin
+     * @param end
+     * @return
+     */
+    protected static String translateFromHEX(String[] list, int begin, int end) {
+        StringBuilder builder = new StringBuilder();
+        if (end > list.length || begin >= end) {
+            return "";
+        }
+        for (int i = begin; i < end; i++) {
+            byte b = Byte.parseByte(list[i]);
+            if (b > 9) {
+                char c = (char) b;
+                builder.append(c);
+            } else {
+                builder.append(b);
+            }
+        }
+        return builder.toString();
+    }
+
+    /**
+     * byte[] 只有两个字节，把两个字节的 hex 显示倒过来
+     * @return
+     */
+    protected static String getReversalHEXToString(String[] b){
+        if (b.length != 2) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (int i = 1; i >= 0; i--) {
+            String s = Integer.toHexString(Byte.parseByte(b[i]) & 0xff);
+            if (s.length() ==1 ){
+                builder.append("0");
+            }
+            builder.append(s);
+        }
+        return builder.toString().toUpperCase();
+    }
+
+    /**
+     * byte[] 只有两个字节，把两个字节的 hex 显示出来
+     * @param b
+     * @return
+     */
+    protected static String getNormalHEXToString(String[] b) {
+        String temp = b[0];
+        b[0] = b[1];
+        b[1] = temp;
+        return getReversalHEXToString(b);
+    }
+
+    /**
+     * 截取数据， 从 string[] 截取指定位置开始，指定长度
+     * @param list
+     * @param begin
+     * @param length
+     * @return
+     */
+    protected static String[] cutData(String[] list, int begin, int length) {
+        String[] result = new String[length];
+        for (int i = 0; i < length; i++) {
+            result[i] = list[begin + i];
+        }
+        return result;
+    }
+
+    protected static UsbsharePortDetail makePortDetail(String[] portDetail) {
+        UsbsharePortDetail p = new UsbsharePortDetail();
+        p.setExistDevice(UsbshareUtils.translateFromHEX(portDetail,0,1));
+        p.setUseStatus(UsbshareUtils.translateFromHEX(portDetail,1,2));
+        p.setBusid(UsbshareUtils.translateFromASC(portDetail,2,22));
+        p.setDeviceType(UsbshareUtils.translateFromHEX(portDetail,22,23));
+        p.setDeviceProtocolType(UsbshareUtils.getNormalHEXToString(UsbshareUtils.cutData(portDetail,23,2)));
+        p.setDevicePID(UsbshareUtils.getReversalHEXToString(UsbshareUtils.cutData(portDetail,25,2)));
+        p.setDeviceVID(UsbshareUtils.getReversalHEXToString(UsbshareUtils.cutData(portDetail,27,2)));
+        p.setSupportedNumber(UsbshareUtils.translateFromHEX(portDetail,29,30));
+        p.setDeviceName(UsbshareUtils.translateFromASC(portDetail,30,80));
+        p.setUserIP(UsbshareUtils.translateFromASC(portDetail,80,104));
+        p.setUserGUID(UsbshareUtils.translateFromASC(portDetail,104,142));
+        return p;
+    }
+    /**
+     * 根据string[] 制造一个Device
+     * 从string[] 的第一个开始取值
+     * @param deviceData
+     * @return
+     */
+    protected static UsbshareDevice makeDevice(String[] deviceData) {
+        UsbshareDevice usbshareDevice = new UsbshareDevice();
+        usbshareDevice.setVirtualUsbPort(UsbshareUtils.translateFromHEX(deviceData,0,1));
+        usbshareDevice.setUsbPort(UsbshareUtils.translateFromHEX(deviceData,1,5));
+        usbshareDevice.setBusid(UsbshareUtils.translateFromASC(deviceData,5,25));
+        usbshareDevice.setDeviceType(UsbshareUtils.translateFromHEX(deviceData,25,26));
+        usbshareDevice.setDeviceProtocolType(UsbshareUtils.getNormalHEXToString(UsbshareUtils.cutData(deviceData,26,2)));
+        usbshareDevice.setDevicePID(UsbshareUtils.getReversalHEXToString(UsbshareUtils.cutData(deviceData,28,2)));
+        usbshareDevice.setDeviceVID(UsbshareUtils.getReversalHEXToString(UsbshareUtils.cutData(deviceData,30,2)));
+        usbshareDevice.setSupportedNumber(UsbshareUtils.translateFromHEX(deviceData,32,33));
+        usbshareDevice.setDeviceName(UsbshareUtils.translateFromASC(deviceData,33,83));
+        return usbshareDevice;
+    }
+
+    /**
+     * 计算开始位置的偏移量
+     * @param data
+     * @return
+     */
+    protected static int countOffset(UsbshareNative data) {
+        //第一次，偏移量就是0
+        if (data.getUsbshareTerminals() == null || data.getUsbshareTerminals().size() == 0) {
+            return 0;
+        }
+        //已经读取到终端设备了，进行偏移量计算
+        int begin = 0;
+        for (int i = 0; i < data.getTerminalNum(); i++) {
+            List<UsbshareTerminal> usbshareTerminals = data.getUsbshareTerminals();
+            for (int j = 0; j < usbshareTerminals.size(); j++) {
+                UsbshareTerminal usbshareTerminal = usbshareTerminals.get(j);
+                int deviceNum = usbshareTerminal.getUsbNum();
+                begin += deviceNum * 83; //一个Device 83长
+                begin += 16;
+            }
+        }
+        return begin;
+    }
+
+    /**
+     * 端口状态 已被占用，确认是否是发起人自己占用
+     * @param ip
+     * @param port
+     * @param id
+     * @param usbPort
+     * @return
+     */
+    protected static boolean isYourself(String ip,int port,String id ,int usbPort) {
+        String json = Usbshare.queryPortDetail(ip,port,id,usbPort);
+        JSONObject jsonObject = JSON.parseObject(json);
+        String userIp = (String) jsonObject.get("userIP");
+        if (ip.equals(userIp)) {
+            return true;
+        }
+        Enumeration<NetworkInterface> netInterfaces;
+        try {
+            netInterfaces = NetworkInterface.getNetworkInterfaces();
+            InetAddress address;
+            // 遍历每个网卡，拿到ip
+            while (netInterfaces.hasMoreElements()) {
+                NetworkInterface ni = netInterfaces.nextElement();
+                Enumeration<InetAddress> addresses = ni.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    address = addresses.nextElement();
+                    if (userIp.equals(address.getHostAddress())) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } catch (SocketException e) {
+        }
+        return false;
+    }
+
+    /**
+     * 确认端口是未使用状态
+     * @param ip
+     * @param port
+     * @param id
+     * @param usbPort
+     * @return
+     */
+    protected static String portIsUnuse(String ip,int port,String id ,int usbPort) {
+        JSONObject jsonObject = JSON.parseObject(Usbshare.queryPortDetail(ip,port,id,usbPort));
+        if ((int)jsonObject.get("code") == 1) {
+            return (String) jsonObject.get("desc");
+        } else if (UsbshareConstants.UNUSE_IP.equals(jsonObject.get("userIP"))) {
+            return "unuse";
+        } else {
+            return "inuse";
+        }
+    }
+}
